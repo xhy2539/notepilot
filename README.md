@@ -127,3 +127,11 @@ PNG 测试需已安装 Playwright Chromium，且 frontend/npm ci 已完成。测
 ## Docker（可选）
 
 先创建 backend/.env，再在仓库根目录执行 `docker compose up --build`。容器访问宿主机小红书服务时，将 XHS_BASE_URL 改为 `http://host.docker.internal:18060`。默认端口只映射本机。Docker 镜像构建未在本次环境实测。
+
+## 云端 UI 演示
+
+在线演示地址：https://notepilot-demo-xhy2539.golden-gem-6842.chatgpt.site
+
+演示只在浏览器内运行：可策划、编辑、选择导入音乐、审核并下载 6 张 PNG 发布包，作品仅存当前浏览器。没有 Python 后台、真实模型调用或实时热点调研。默认私有访问。完整 Agent 请按本地启动步骤运行。
+
+自行构建演示：在 frontend 执行 `VITE_CLOUD_DEMO=1 npm run build`，将 dist 托管到静态站点即可。正常构建不设置该变量，使用 FastAPI。
