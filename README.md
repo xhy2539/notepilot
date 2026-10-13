@@ -2,6 +2,14 @@
 
 小红书图文创作 Agent：输入意图 → 调研近期参考 → 选创作方向 → 生成文案与配图方案 → 编辑/选择 BGM → 人工审核 → 导出发布包。
 
+## 创作工作台
+
+浅紫与淡蓝的轻量界面：输入意图、选择方向、大画布预览、逐页编辑，连接设置收进折叠面板。支持手机布局与键盘操作。
+
+![NotePilot 创作首页](docs/screenshots/home.png)
+
+[查看编辑工作台](docs/screenshots/editor.png) · [界面设计说明](docs/ui-design.md)
+
 ## Mac：拉下来直接启动
 
 ```bash
