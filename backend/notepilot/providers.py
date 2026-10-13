@@ -16,6 +16,15 @@ class ProviderError(Exception):
     pass
 
 
+def text_key():
+    return os.getenv('LLM_API_KEY') or os.getenv('DASHSCOPE_API_KEY')
+
+
+def xhs_headers():
+    token = os.getenv('XHS_API_TOKEN')
+    return {'Authorization': f'Bearer {token}'} if token else {}
+
+
 def count(value):
     if value is None or value == "":
         return None
@@ -56,7 +65,7 @@ async def covers_data(url):
 
 class LLM:
     async def json(self, prompt, schema: type[BaseModel], images=None):
-        key, model = os.getenv('LLM_API_KEY'), os.getenv('LLM_MODEL')
+        key, model = text_key(), os.getenv('LLM_MODEL')
         if not key or not model:
             raise ProviderError('真实模式需配置 LLM_API_KEY 与 LLM_MODEL')
         content = [{'type': 'text', 'text': prompt}]
@@ -65,7 +74,10 @@ class LLM:
         async with httpx.AsyncClient(timeout=90, trust_env=False) as client:
             # One corrective retry; hard limit per stage.
             for attempt in range(2):
-                response = await client.post(os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/chat/completions', headers={'Authorization': f'Bearer {key}'}, json={'model': os.getenv('VISION_MODEL') if images else model, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': content}]})
+                body = {'model': os.getenv('VISION_MODEL') if images else model, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': content}]}
+                if not images and (os.getenv('LLM_PROVIDER') == 'bailian'):
+                    body['enable_thinking'] = False
+                response = await client.post(os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/chat/completions', headers={'Authorization': f'Bearer {key}'}, json=body)
                 if response.status_code >= 400:
                     raise ProviderError(f'文本服务 HTTP {response.status_code}，请检查配置或额度')
                 try:
@@ -84,7 +96,7 @@ class XHS:
         base = os.getenv('XHS_BASE_URL', '').rstrip('/')
         if not base:
             return [], ['未配置 XHS_BASE_URL，仅使用导入样本']
-        async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=60, trust_env=False, headers=xhs_headers()) as client:
             for keyword in keywords[:2]:
                 for sort in ('最多收藏', '最新'):
                     try:
@@ -164,18 +176,58 @@ async def collect(brief: Brief, keywords):
     return {'samples': samples, 'music': music, 'warnings': warnings, 'fetched_at': now(), 'coverage': 'demo' if brief.mode == 'demo' else 'partial', 'visual_analysis': []}
 
 
+def bailian_image_url(url):
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme == 'https' and not parsed.username and not parsed.password and parsed.port in (None, 443) and bool(re.fullmatch(r'dashscope[a-z0-9-]*\.oss-[a-z0-9-]+\.aliyuncs\.com', parsed.hostname or ''))
+    except ValueError:
+        return False
+
+
+async def download_bailian_image(url):
+    if not bailian_image_url(url):
+        raise ProviderError('百炼返回了非官方图片域名，未下载')
+    # No model API Authorization header is forwarded to the image storage host.
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=False, trust_env=False) as client:
+            async with client.stream('GET', url) as response:
+                if response.status_code != 200:
+                    raise ProviderError(f'百炼图片下载 HTTP {response.status_code}')
+                raw = bytearray()
+                async for chunk in response.aiter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > 20_000_000:
+                        raise ProviderError('百炼图片超过 20MB')
+        return bytes(raw)
+    except httpx.HTTPError:
+        raise ProviderError('百炼图片下载失败，请稍后重试')
+
+
 async def image_generate(prompt):
-    key, model = os.getenv('IMAGE_API_KEY'), os.getenv('IMAGE_MODEL')
+    bailian = os.getenv('IMAGE_PROVIDER') == 'bailian'
+    key = os.getenv('IMAGE_API_KEY') or (text_key() if bailian else None)
+    model = os.getenv('IMAGE_MODEL')
     if not key or not model:
         raise ProviderError('配图需配置 IMAGE_API_KEY 和 IMAGE_MODEL')
-    async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-        response = await client.post(os.getenv('IMAGE_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/images/generations', headers={'Authorization': f'Bearer {key}'}, json={'model': model, 'prompt': prompt + '。原创示意插画，无文字，无商标。', 'n': 1, 'size': '1024x1024', 'response_format': 'b64_json'})
+    base = os.getenv('IMAGE_BASE_URL') or (os.getenv('LLM_BASE_URL') if bailian else None) or 'https://api.openai.com/v1'
+    body = {'model': model, 'prompt': prompt + '。原创示意插画，无文字，无商标。', 'n': 1, 'size': '1024x1024'}
+    if not bailian:
+        body['response_format'] = 'b64_json'
+    async with httpx.AsyncClient(timeout=240, trust_env=False) as client:
+        response = await client.post(base.rstrip('/') + '/images/generations', headers={'Authorization': f'Bearer {key}'}, json=body)
         if response.status_code >= 400:
-            raise ProviderError(f'图片服务 HTTP {response.status_code}；接口需支持 b64_json')
-        data = response.json().get('data', [{}])[0].get('b64_json')
-        if not data or len(data) > 28_000_000:
-            raise ProviderError('图片接口未返回可用 b64_json；未自动抓取临时 URL')
-        raw = base64.b64decode(data, validate=True)
+            raise ProviderError(f'图片服务 HTTP {response.status_code}；请检查模型、地域和额度')
+        try:
+            item = response.json()['data'][0]
+            if bailian and item.get('url'):
+                raw = await download_bailian_image(item['url'])
+            else:
+                data = item.get('b64_json')
+                if not isinstance(data, str) or len(data) > 28_000_000:
+                    raise ProviderError('图片接口未返回可用 Base64 图片')
+                raw = base64.b64decode(data, validate=True)
+        except (ValueError, KeyError, TypeError, IndexError):
+            raise ProviderError('图片接口响应格式不符合预期')
         if not raw.startswith(b'\x89PNG\r\n\x1a\n'):
             raise ProviderError('首版配图只接受 PNG')
         return raw

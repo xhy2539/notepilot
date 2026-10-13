@@ -23,7 +23,7 @@
 
 小红书 MCP：独立运行，HTTP REST，仅允许搜索与详情两种只读调用。接口核对日期 2026-10-13。若上游响应变化，更新 providers.py 与契约测试；不把整个上游服务器的写工具暴露给模型。
 
-模型服务：通用 chat/completions，不使用厂商 SDK；结构化 schema 使用 Pydantic，最多一次纠错。插画调用单独 images/generations，保存 PNG 原始字节并通过本项目 UUID 提供预览。图片 URL 不交给服务端任意抓取；参考封面下载只允许 HTTPS *.xhscdn.com、不跟随重定向、限制类型与大小。
+模型服务：通用 chat/completions，不使用厂商 SDK；结构化 schema 使用 Pydantic，最多一次纠错。插画调用单独 images/generations，保存 PNG 原始字节并通过本项目 UUID 提供预览。百炼图片仅从官方 DashScope OSS 域名下载，通用 provider 只接受 Base64；参考封面下载只允许 HTTPS *.xhscdn.com、不跟随重定向、限制类型与大小。
 
 ## 下一步（优先级）
 

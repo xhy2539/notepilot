@@ -8,3 +8,7 @@ dist/
 data/
 *.sqlite*
 *.tsbuildinfo
+.tools/
+cookies.json
+browser-data/
+.venv.previous.*/

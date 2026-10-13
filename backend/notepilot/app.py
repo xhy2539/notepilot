@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -11,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .models import Brief, Draft, Edit, Selection, Revision, ImageRequest, now
 from .store import Store, Conflict
 from .agent import research_graph, generation_graph, check_draft
-from .providers import ProviderError, image_generate
+from .providers import ProviderError, image_generate, text_key, xhs_headers, payload
 from .render import export_zip
 
 DATA = Path(os.getenv('NOTEPILOT_DATA', './data')).resolve()
@@ -106,7 +107,24 @@ def start(project, stage):
 
 @app.get('/api/health')
 def health():
-    return {'ok': True, 'llm': bool(os.getenv('LLM_API_KEY') and os.getenv('LLM_MODEL')), 'xhs': bool(os.getenv('XHS_BASE_URL')), 'image': bool(os.getenv('IMAGE_API_KEY') and os.getenv('IMAGE_MODEL'))}
+    image_key = os.getenv('IMAGE_API_KEY') or (text_key() if os.getenv('IMAGE_PROVIDER') == 'bailian' else None)
+    return {'ok': True, 'llm': bool(text_key() and os.getenv('LLM_MODEL')), 'xhs': bool(os.getenv('XHS_BASE_URL')), 'image': bool(image_key and os.getenv('IMAGE_MODEL'))}
+
+
+@app.get('/api/integrations/xhs/{operation}')
+async def xhs_login(operation: str):
+    routes = {'status': '/api/v1/login/status', 'qrcode': '/api/v1/login/qrcode'}
+    if operation not in routes:
+        raise HTTPException(404, '不支持的操作')
+    base = os.getenv('XHS_BASE_URL', '').rstrip('/')
+    if not base:
+        raise HTTPException(503, '小红书服务未配置，请运行 Mac 启动脚本')
+    try:
+        async with httpx.AsyncClient(timeout=90, trust_env=False, headers=xhs_headers()) as client:
+            data = payload(await client.get(base + routes[operation]))
+        return {key: data.get(key) for key in ('is_logged_in', 'img', 'timeout') if key in data}
+    except (httpx.HTTPError, ValueError, ProviderError):
+        raise HTTPException(503, '小红书服务未就绪，请查看 .tools/logs/xhs.log，稍后重试')
 
 
 @app.get('/api/projects')
